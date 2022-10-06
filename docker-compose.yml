@@ -7,6 +7,7 @@
 version: "3.8"
 
 volumes:
+  db-data:
   directus-uploads:
   supabase-storage:
 services:
@@ -170,7 +171,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      # - ./volumes/db/data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql/data
       - ./supabase/docker/volumes/db/init:/docker-entrypoint-initdb.d
   
   directuscache:
