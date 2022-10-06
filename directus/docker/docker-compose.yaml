@@ -1,0 +1,75 @@
+version: '3'
+services:
+  directuscache:
+    container_name: directuscache
+    image: redis:6
+
+  directus:
+    container_name: directus
+    image: directus/directus:9.18.1
+    ports:
+      - 8055:8055
+    volumes:
+      # By default, uploads are stored in /directus/uploads
+      # Always make sure your volumes matches the storage root when using
+      # local driver
+      - directus-uploads:/directus/uploads
+      # Make sure to also mount the volume when using SQLite
+      # - ./database:/directus/database
+      # If you want to load extensions from the host
+      # - ./extensions:/directus/extensions
+    depends_on:
+      - directuscache
+    environment:
+      KEY: '6fef6d44-4337-492f-aff1-9676c83ab45d'
+      SECRET: '45dceda7-7241-4f76-9863-52fa8e988185'
+
+      DB_CLIENT: 'pg'
+      DB_HOST: 'db'
+      DB_PORT: '5432'
+      DB_DATABASE: 'postgres'
+      DB_USER: 'postgres'
+      DB_PASSWORD: 'your-super-secret-and-long-postgres-password'
+
+      CACHE_ENABLED: 'false'
+      CACHE_STORE: 'redis'
+      CACHE_AUTO_PURGE: 'true'
+      CACHE_REDIS: 'redis://directuscache:6379'
+
+      CORS_ENABLED: "true"
+      CORS_ORIGIN: "true"
+
+      # PUBLIC_URL: http://localhost:8055
+      # ROOT_REDIRECT: http://localhost:8055
+      ADMIN_EMAIL: 'email@gmail.com'
+      ADMIN_PASSWORD: 'password@directus'
+
+      EMAIL_FROM: "email@gmail.com"
+      EMAIL_TRANSPORT: "smtp"
+
+      # ## Email (SMTP Transport)
+      # EMAIL_SMTP_HOST: "smtp.gmail.com"
+      # EMAIL_SMTP_PORT: 465
+      # EMAIL_SMTP_USER: "email@gmail.com"
+      # EMAIL_SMTP_PASSWORD: ""
+      # EMAIL_SMTP_SECURE: true # Use TLS
+
+      ## Auth Providers
+      # AUTH_PROVIDERS: "keycloak"
+
+      # AUTH_KEYCLOAK_DRIVER: "openid"
+      # AUTH_KEYCLOAK_CLIENT_ID: "directus"
+      # AUTH_KEYCLOAK_CLIENT_SECRET: ""
+      # AUTH_KEYCLOAK_ISSUER_URL: "https://auth.example.com/auth/realms/master/.well-known/openid-configuration"
+      # OAUTH_KEYCLOAK_PROFILE_URL: "https://auth.example.com/auth/realms/master/protocol/openid-connect/userinfo"
+      # AUTH_KEYCLOAK_IDENTIFIER_KEY: "email"
+      # AUTH_KEYCLOAK_SCOPE: "openid email"
+      # AUTH_KEYCLOAK_ALLOW_PUBLIC_REGISTRATION: "true"
+      # AUTH_KEYCLOAK_DEFAULT_ROLE_ID: "uuid"
+
+      # Make sure to set this in production
+      # (see https://docs.directus.io/self-hosted/config-options#general)
+      # PUBLIC_URL: 'https://directus.example.com'
+
+volumes:
+  directus-uploads:
