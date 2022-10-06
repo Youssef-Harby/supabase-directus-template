@@ -42,4 +42,7 @@ hint: ctrl + x >> y >> enter to save the edits with nano
 ```bash
 docker compose up -d
 ```
-hint: for older docker versi you may need to run with `docker-compose up -d`
+hint: for older docker versions you may need to run with `docker-compose up -d`
+
+- Enable PostGIS to use Geometry features on PostgreSQL and Directus Dashboard from Supabase Studio: http://localhost:3000/
+- Directus: http://localhost:8055/
