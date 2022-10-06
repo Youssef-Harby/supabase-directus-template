@@ -1,0 +1,246 @@
+# Usage
+#   Start:          docker compose up
+#   With helpers:   docker compose -f docker-compose.yml -f ./dev/docker-compose.dev.yml up
+#   Stop:           docker compose down
+#   Destroy:        docker compose -f docker-compose.yml -f ./dev/docker-compose.dev.yml down -v --remove-orphans
+
+version: "3.8"
+
+volumes:
+  directus-uploads:
+  supabase-storage:
+services:
+  studio:
+    container_name: supabase-studio
+    image: supabase/studio:latest
+    restart: unless-stopped
+    ports:
+      - ${STUDIO_PORT}:3000/tcp
+    environment:
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+      DEFAULT_ORGANIZATION: ${STUDIO_DEFAULT_ORGANIZATION}
+      DEFAULT_PROJECT: ${STUDIO_DEFAULT_PROJECT}
+
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_REST_URL: ${PUBLIC_REST_URL}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+
+  kong:
+    container_name: supabase-kong
+    image: kong:2.1
+    restart: unless-stopped
+    ports:
+      - ${KONG_HTTP_PORT}:8000/tcp
+      - ${KONG_HTTPS_PORT}:8443/tcp
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
+      # https://github.com/supabase/cli/issues/14
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl
+    volumes:
+      - ./supabase/docker/volumes/api:/var/lib/kong
+
+  auth:
+    container_name: supabase-auth
+    image: supabase/gotrue:v2.10.0
+    depends_on:
+      - db # Disable this if you are using an external Postgres database
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL}
+
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}?search_path=auth
+
+      GOTRUE_SITE_URL: ${SITE_URL}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS}
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP}
+
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: ${ENABLE_EMAIL_SIGNUP}
+      GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT}
+      GOTRUE_SMTP_USER: ${SMTP_USER}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME}
+      GOTRUE_MAILER_URLPATHS_INVITE: ${MAILER_URLPATHS_INVITE}
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: ${MAILER_URLPATHS_CONFIRMATION}
+      GOTRUE_MAILER_URLPATHS_RECOVERY: ${MAILER_URLPATHS_RECOVERY}
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: ${MAILER_URLPATHS_EMAIL_CHANGE}
+
+      GOTRUE_EXTERNAL_PHONE_ENABLED: ${ENABLE_PHONE_SIGNUP}
+      GOTRUE_SMS_AUTOCONFIRM: ${ENABLE_PHONE_AUTOCONFIRM}
+
+  rest:
+    container_name: supabase-rest
+    image: postgrest/postgrest:v9.0.1
+    depends_on:
+      - db # Disable this if you are using an external Postgres database
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS}
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+
+  realtime:
+    container_name: supabase-realtime
+    image: supabase/realtime:v0.22.4
+    depends_on:
+      - db # Disable this if you are using an external Postgres database
+    restart: unless-stopped
+    environment:
+      DB_HOST: ${POSTGRES_HOST}
+      DB_PORT: ${POSTGRES_PORT}
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_SSL: "false"
+      PORT: 4000
+      JWT_SECRET: ${JWT_SECRET}
+      REPLICATION_MODE: RLS
+      REPLICATION_POLL_INTERVAL: 100
+      SECURE_CHANNELS: "true"
+      SLOT_NAME: supabase_realtime_rls
+      TEMPORARY_SLOT: "true"
+    command: >
+      bash -c "./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate
+      && ./prod/rel/realtime/bin/realtime start"
+
+  storage:
+    container_name: supabase-storage
+    image: supabase/storage-api:v0.10.0
+    depends_on:
+      - db # Disable this if you are using an external Postgres database
+      - rest
+    restart: unless-stopped
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      PGOPTIONS: -c search_path=storage,public
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      # TODO: https://github.com/supabase/storage-api/issues/55
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+    volumes:
+      - supabase-storage:/var/lib/storage
+
+  meta:
+    container_name: supabase-meta
+    image: supabase/postgres-meta:v0.29.0
+    depends_on:
+      - db # Disable this if you are using an external Postgres database
+    restart: unless-stopped
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: ${POSTGRES_HOST}
+      PG_META_DB_PORT: ${POSTGRES_PORT}
+      PG_META_DB_NAME: ${POSTGRES_DB}
+      PG_META_DB_USER: ${POSTGRES_USER}
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+  # Comment out everything below this point if you are using an external Postgres database
+  db:
+    container_name: supabase-db
+    image: supabase/postgres:14.1.0.21
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    restart: unless-stopped
+    ports:
+      - ${POSTGRES_PORT}:5432
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # - ./volumes/db/data:/var/lib/postgresql/data
+      - ./supabase/docker/volumes/db/init:/docker-entrypoint-initdb.d
+  
+  directuscache:
+    container_name: directuscache
+    image: redis:6
+
+  directus:
+    container_name: directus
+    image: directus/directus:9.18.1
+    ports:
+      - 8055:8055
+    volumes:
+      # By default, uploads are stored in /directus/uploads
+      # Always make sure your volumes matches the storage root when using
+      # local driver
+      - directus-uploads:/directus/uploads
+      # Make sure to also mount the volume when using SQLite
+      # - ./database:/directus/database
+      # If you want to load extensions from the host
+      # - ./extensions:/directus/extensions
+    depends_on:
+      - directuscache
+      - db
+    environment:
+      KEY: ${DIRECTUS_KEY}
+      SECRET: ${DIRECTUS_SECRET}
+
+      DB_CLIENT: 'pg'
+      DB_HOST: ${POSTGRES_HOST}
+      DB_PORT: ${POSTGRES_PORT}
+      DB_DATABASE: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      CACHE_ENABLED: 'false'
+      CACHE_STORE: 'redis'
+      CACHE_AUTO_PURGE: 'true'
+      CACHE_REDIS: 'redis://directuscache:6379'
+
+      CORS_ENABLED: ${DIRECTUS_CORS_ENABLED}
+      CORS_ORIGIN: ${DIRECTUS_CORS_ORIGIN}
+
+      # PUBLIC_URL: ${DIRECTUS_PUBLIC_URL}
+      # ROOT_REDIRECT: ${DIRECTUS_ROOT_REDIRECT}
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD}
+
+      # EMAIL_FROM: ${DIRECTUS_EMAIL_FROM}
+      # EMAIL_TRANSPORT: ${DIRECTUS_EMAIL_TRANSPORT}
+
+      # ## Email (SMTP Transport)
+      # EMAIL_SMTP_HOST: ${DIRECTUS_EMAIL_SMTP_HOST}
+      # EMAIL_SMTP_PORT: ${DIRECTUS_EMAIL_SMTP_PORT}
+      # EMAIL_SMTP_USER: ${DIRECTUS_EMAIL_SMTP_USER}
+      # EMAIL_SMTP_PASSWORD: ${DIRECTUS_EMAIL_SMTP_PASSWORD}
+      # EMAIL_SMTP_SECURE: ${DIRECTUS_EMAIL_SMTP_SECURE} # Use TLS 
+
+      ## Auth Providers
+      # AUTH_PROVIDERS: ${DIRECTUS_AUTH_PROVIDERS}
+
+      # AUTH_KEYCLOAK_DRIVER: ${DIRECTUS_AUTH_KEYCLOAK_DRIVER}
+      # AUTH_KEYCLOAK_CLIENT_ID: ${DIRECTUS_AUTH_KEYCLOAK_CLIENT_ID}
+      # AUTH_KEYCLOAK_CLIENT_SECRET: ${DIRECTUS_AUTH_KEYCLOAK_CLIENT_SECRET}
+      # AUTH_KEYCLOAK_ISSUER_URL: ${DIRECTUS_AUTH_KEYCLOAK_ISSUER_URL}
+      # OAUTH_KEYCLOAK_PROFILE_URL: ${DIRECTUS_OAUTH_KEYCLOAK_PROFILE_URL}
+      # AUTH_KEYCLOAK_IDENTIFIER_KEY: ${DIRECTUS_AUTH_KEYCLOAK_IDENTIFIER_KEY}
+      # AUTH_KEYCLOAK_SCOPE: ${DIRECTUS_AUTH_KEYCLOAK_SCOPE}
+      # AUTH_KEYCLOAK_ALLOW_PUBLIC_REGISTRATION: ${DIRECTUS_AUTH_KEYCLOAK_ALLOW_PUBLIC_REGISTRATION}
+      # AUTH_KEYCLOAK_DEFAULT_ROLE_ID: ${DIRECTUS_AUTH_KEYCLOAK_DEFAULT_ROLE_ID}
+
+      # Make sure to set this in production
+      # (see https://docs.directus.io/self-hosted/config-options#general)
+      # PUBLIC_URL: 'https://directus.example.com'
